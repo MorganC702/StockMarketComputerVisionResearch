@@ -1,10 +1,10 @@
 """
-File:        clean_data.py
-Description: Complete data cleansing function 
-Author: Morgan Cooper
-Created:     2025-09-01
-Updated:     2025-09-01
-Usage:       N/A  
+File:         clean_data.py
+Description:  Complete data cleansing function 
+Author:       Morgan Cooper
+Created:      2025-09-01
+Updated:      2025-09-01
+Usage:        N/A  
 
 Notes:
 For this research project the data source is anticipated to be very high quality, 
