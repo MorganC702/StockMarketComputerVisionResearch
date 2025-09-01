@@ -1,10 +1,10 @@
 """
-File:        load_ticker.py
-Description: Finds and returns a ticker from a directory of tickers, either upon request or at random.
-Author:      Morgan Cooper
-Created:     2025-09-01
-Updated:     2025-09-01
-Usage:       N/A  
+File:         load_ticker.py
+Description:  Finds and returns a ticker from a directory of tickers, either upon request or at random.
+Author:       Morgan Cooper
+Created:      2025-09-01
+Updated:      2025-09-01
+Usage:        N/A  
 
 Notes:
 If `symbol` is provided, load that ticker; otherwise pick randomly.
