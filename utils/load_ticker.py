@@ -7,12 +7,13 @@ Updated:      2025-09-01
 Usage:        N/A  
 
 Notes:
-If `symbol` is provided, load that ticker; otherwise pick randomly.
+If `symbol` is provided, load that ticker; otherwise pick randomly (based on seed).
 Returns a single concatenated DataFrame sorted by timestamp.
 """
 
 import sys; sys.path.append("..")
 from pathlib import Path
+from time import time
 import pandas as pd 
 import random
 
@@ -24,6 +25,7 @@ def load_ticker(
     symbol: str | None = None,
     verbose: bool = True
 ) -> pd.DataFrame:
+    
     
     # Convert base_dir to filesytem path object
     base = Path(base_dir)
@@ -58,11 +60,11 @@ def load_ticker(
         try:
             df_part = pd.read_parquet(f)
             
-            # ensure Symbol column exists/consistent
+            # Ensure Symbol column exists/consistent
             if symbol_col not in df_part.columns:
                 df_part["Symbol"] = symbol
                 
-            # ensure time column is in datetime format
+            # Ensure time column is in datetime format
             if time_col in df_part.columns and not pd.api.types.is_datetime64_any_dtype(df_part[time_col]):
                 df_part[time_col] = pd.to_datetime(df_part[time_col], utc=True, errors="coerce")
             frames.append(df_part)
@@ -76,7 +78,7 @@ def load_ticker(
     # Combine all files 
     df = pd.concat(frames, ignore_index=True)
 
-    # sort and clean simple issues
+    # Sort and clean simple issues
     if time_col in df.columns:
         df = df.sort_values(time_col).reset_index(drop=True)
 
