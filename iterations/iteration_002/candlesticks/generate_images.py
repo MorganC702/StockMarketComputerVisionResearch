@@ -12,7 +12,7 @@ def generate(
     body_width=20,
     wick_width=2,
     label_to_id=None,
-    pad_px=5
+    margin_frac=0.05  # 5% whitespace around edges
 ):
     """
     Generate candlestick images + YOLO labels in pure OpenCV (no matplotlib).
@@ -22,6 +22,10 @@ def generate(
     os.makedirs(image_dir, exist_ok=True)
     os.makedirs(label_dir, exist_ok=True)
 
+    # dynamic padding for boxes (~1% of image size)
+    pad_px_w = int(0.01 * W)
+    pad_px_h = int(0.01 * H)
+
     for idx in tqdm(range(window, len(df)), desc="Generating images"):
         df_window = df.iloc[idx - window:idx]
 
@@ -30,20 +34,28 @@ def generate(
 
         boxes, class_ids = [], []
 
-        # map price range → vertical pixels
+        # margins
+        y_margin = int(margin_frac * H)
+        x_margin = int(margin_frac * W)
+
+        # map price range → vertical pixels inside margin
         min_price = df_window["Low"].min()
         max_price = df_window["High"].max()
         y_span = max_price - min_price
 
         def y_map(val): 
-            return int(H - (val - min_price) / y_span * H)  # top=0, bottom=H
+            return int(
+                H - y_margin - (val - min_price) / y_span * (H - 2 * y_margin)
+            )  # top=0, bottom=H
 
         for i, row in enumerate(df_window.itertuples()):
             o, c, h, l = row.Open, row.Close, row.High, row.Low
-            color = (0,200,0) if c > o else (0,0,200)  # green up, red down
+            color = (0, 200, 0) if c > o else (0, 0, 200)  # green up, red down
 
-            # horizontal placement (even spacing across window)
-            x_center = int((i + 0.5) * (W / window))
+            # horizontal placement (spread across width minus margins)
+            x_center = int(
+                x_margin + (i + 0.5) * ((W - 2 * x_margin) / window)
+            )
             x0 = x_center - body_width // 2
             x1 = x_center + body_width // 2
 
@@ -54,13 +66,13 @@ def generate(
             # draw wick
             cv2.line(img, (x_center, y_high), (x_center, y_low), color, wick_width)
             # draw body
-            cv2.rectangle(img, (x0, min(y_open,y_close)), (x1, max(y_open,y_close)), color, -1)
+            cv2.rectangle(img, (x0, min(y_open, y_close)), (x1, max(y_open, y_close)), color, -1)
 
             # --- YOLO box (candle low→high, with padding) ---
-            x_min = x0 - pad_px
-            x_max = x1 + pad_px
-            y_min = y_high - pad_px
-            y_max = y_low + pad_px
+            x_min = x0 - pad_px_w
+            x_max = x1 + pad_px_w
+            y_min = y_high - pad_px_h
+            y_max = y_low + pad_px_h
 
             # clamp to image boundaries
             x_min = max(0, x_min)
@@ -80,7 +92,8 @@ def generate(
 
         # save image
         img_path = os.path.join(image_dir, f"candle_{idx}.png")
-        cv2.imwrite(img_path, img)
+        cv2.imwrite(img_path, img)  
+
 
         # save YOLO labels
         if label_to_id is not None:
