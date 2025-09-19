@@ -12,10 +12,10 @@
 *.env
 
 # ignore data directories
-data/
-dataset/
-runs_images/
-sample/
+**/data/
+**/dataset/
+**/runs_images/
+**/sample/
 
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs
