@@ -7,17 +7,21 @@ from PIL import Image, ImageDraw
 
 
 class MultiTimeframeImageGen:
-    def __init__(self,
-                 timeframes,
-                 base_tf="1m",
-                 window_size=1 * 24 * 60,
-                 history_days=30,
-                 output_root=None,
-                 image_size=(640, 640),
-                 dot_radius=3,
-                 max_trail_length=100,
-                 price_scale=128.0,
-                 show_trail=True):
+    def __init__(
+            self,
+            timeframes,
+            base_tf="1m",
+            window_size=1 * 24 * 60,
+            history_days=30,
+            output_root=None,
+            image_size=(640, 640),
+            dot_radius=2,
+            max_trail_length=100,
+            price_scale=1.0,
+            show_trail=True,
+            normalize=True   # <--- lock-to-center mode
+        ):
+        
         self.base_tf = base_tf
         self.timeframes = timeframes
         self.window_size = window_size
@@ -29,7 +33,8 @@ class MultiTimeframeImageGen:
         self.dot_radius = dot_radius
         self.max_trail_length = max_trail_length
         self.price_scale = price_scale
-        self.show_trail = show_trail  # toggle for showing trail dots
+        self.show_trail = show_trail
+        self.normalize = normalize
 
         # frame counters (sequential filenames)
         self.frame_counters = {tf: 0 for tf in timeframes}
@@ -80,7 +85,6 @@ class MultiTimeframeImageGen:
                 }, name=ts)
                 self._process_tf(agg_row, tf)
 
-        # Only render if not preload
         if not preload and self.output_root is not None:
             self._render_images(row.name)
 
@@ -199,8 +203,20 @@ class MultiTimeframeImageGen:
         base_df = pd.DataFrame(self.buffers[self.base_tf])
         if base_df.empty or ts not in base_df.index:
             return
-        price_now = base_df.loc[ts]["Close"]
-        trail_df = base_df.loc[:ts].iloc[-self.max_trail_length:-1]
+
+        # normalization setup
+        if self.normalize:
+            window_high = base_df["High"].max()
+            window_low = base_df["Low"].min()
+            price_range = max(window_high - window_low, 1e-9)
+            price_now_norm = (base_df.loc[ts]["Close"] - window_low) / price_range
+            trail_df = base_df.loc[:ts].iloc[-self.max_trail_length:-1].copy()
+            trail_df["Close"] = (trail_df["Close"] - window_low) / price_range
+        else:
+            price_now = base_df.loc[ts]["Close"]
+            trail_df = base_df.loc[:ts].iloc[-self.max_trail_length:-1]
+            half_viewport = self.image_size[1] / (2 * self.price_scale)
+            price_min, price_max = price_now - half_viewport, price_now + half_viewport
 
         for tf in self.timeframes:
             self.frame_counters[tf] += 1
@@ -218,10 +234,7 @@ class MultiTimeframeImageGen:
 
             x_center = self.image_size[0] // 2
             y_center = self.image_size[1] // 2
-            half_viewport = self.image_size[1] / (2 * self.price_scale)
-            price_min, price_max = price_now - half_viewport, price_now + half_viewport
-
-            yolo_labels = []  # collect YOLO labels
+            yolo_labels = []
 
             # active levels
             levels_df = pd.DataFrame(self.get_active_levels(tf)["high"] +
@@ -241,8 +254,15 @@ class MultiTimeframeImageGen:
                         ]
                         if not match.empty:
                             continue
-                    if not (price_min <= lvl_price <= price_max):
-                        continue
+
+                    if self.normalize:
+                        lvl_price_norm = (lvl_price - window_low) / price_range
+                        dy = (lvl_price_norm - price_now_norm) * self.price_scale * self.image_size[1]
+                        y = int(y_center - dy)
+                    else:
+                        if not (price_min <= lvl_price <= price_max):
+                            continue
+                        y = y_center - (lvl_price - price_now) * self.price_scale
 
                     try:
                         lvl_idx = base_df.index.get_loc(row["level_time"])
@@ -254,11 +274,9 @@ class MultiTimeframeImageGen:
                         continue
 
                     x_start = max(x_center - frames_since * 2 * self.dot_radius, 0)
-                    y = y_center - (lvl_price - price_now) * self.price_scale
                     color = (255, 0, 0) if lvl_type == "high_break" else (0, 200, 0)
                     draw.line([(x_start, y), (self.image_size[0], y)], fill=color, width=2)
 
-                    # YOLO: treat as box spanning full width at y
                     xc = 0.5
                     yc = y / self.image_size[1]
                     bw = 1.0
@@ -266,34 +284,37 @@ class MultiTimeframeImageGen:
                     cls = 0 if lvl_type == "high_break" else 1
                     yolo_labels.append((cls, xc, yc, bw, bh))
 
-            # trail (optional)
+            # trail
             if self.show_trail:
                 for j, (_, row) in enumerate(trail_df.iterrows()):
-                    t_price = row["Close"]
-                    dy = (t_price - price_now) * self.price_scale
+                    if self.normalize:
+                        t_price_norm = row["Close"]
+                        dy = (t_price_norm - price_now_norm) * self.price_scale * self.image_size[1]
+                        cy = int(y_center - dy)
+                    else:
+                        t_price = row["Close"]
+                        dy = (t_price - price_now) * self.price_scale
+                        cy = y_center - dy
+
                     cx = x_center - (len(trail_df) - j) * 2 * self.dot_radius
-                    cy = y_center - dy
                     gray_val = int(255 * (1 - (j + 1) / max(1, len(trail_df))))
                     draw.ellipse([cx - self.dot_radius, cy - self.dot_radius,
                                   cx + self.dot_radius, cy + self.dot_radius],
                                  fill=(gray_val, gray_val, gray_val))
 
-            # center dot (blue for current price)
-            draw.ellipse([x_center - self.dot_radius, y_center - self.dot_radius,
-                          x_center + self.dot_radius, y_center + self.dot_radius],
+            # center dot always locked
+            cy = y_center
+            draw.ellipse([x_center - self.dot_radius, cy - self.dot_radius,
+                          x_center + self.dot_radius, cy + self.dot_radius],
                          fill=(0, 0, 255))
 
-            # YOLO for current price ball
             xc = x_center / self.image_size[0]
-            yc = y_center / self.image_size[1]
+            yc = cy / self.image_size[1]
             bw = 2 * self.dot_radius / self.image_size[0]
             bh = 2 * self.dot_radius / self.image_size[1]
             yolo_labels.append((2, xc, yc, bw, bh))
 
-            # save image
             img.save(out_file)
-
-            # save YOLO labels
             with open(lbl_file, "w") as f:
                 for cls, xc, yc, bw, bh in yolo_labels:
                     f.write(f"{cls} {xc:.6f} {yc:.6f} {bw:.6f} {bh:.6f}\n")
