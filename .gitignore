@@ -16,6 +16,7 @@ data/
 dataset/
 runs_images/
 sample/
+agg_data/
 
 
 # User-specific files (MonoDevelop/Xamarin Studio)
