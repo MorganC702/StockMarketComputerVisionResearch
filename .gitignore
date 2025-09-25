@@ -17,7 +17,7 @@ dataset/
 runs_images/
 sample/
 agg_data/
-yolo_train_data/
+yolo_training_data/
 
 
 # User-specific files (MonoDevelop/Xamarin Studio)
