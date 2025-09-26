@@ -1,39 +1,49 @@
-# policy.py
 import torch
 import torch.nn as nn
-from torchvision import models
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
+from models.yolo_encoder import YOLOEncoder
 
-class YOLOResNetExtractor(BaseFeaturesExtractor):
-    def __init__(self, observation_space, yolo_encoder, features_dim=512+3):
+
+class YOLOCNNExtractor(BaseFeaturesExtractor):
+    def __init__(self, observation_space, features_dim=512, model_path="./models/yolov8n.pt"):
         super().__init__(observation_space, features_dim)
 
-        self.encoder = yolo_encoder
-        for p in self.encoder.parameters():
-            p.requires_grad = False
+        self.encoder = YOLOEncoder(model_path)
 
-        # --- figure out channel count dynamically ---
+        # Probe YOLO output
+        dummy = torch.zeros(1, 3, 640, 640)
         with torch.no_grad():
-            dummy = self.encoder("fake_images/img_0.png")  # one fake path
-        in_channels = dummy.shape[1]
+            out = self.encoder(dummy)
+        self.yolo_channels = out.shape[1]       # = 560
 
-        resnet = models.resnet18(weights=None)
-        resnet.conv1 = nn.Conv2d(in_channels, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        # multiply by number of frames (7)
+        self.total_channels = self.yolo_channels * 7   # = 3920
 
-        self.resnet_backbone = nn.Sequential(*list(resnet.children())[:-1])
-        for p in self.resnet_backbone.parameters():
-            p.requires_grad = False
+        self.cnn_head = nn.Sequential(
+            nn.Conv2d(self.total_channels, 512, kernel_size=3, stride=2, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(512, 256, kernel_size=3, stride=2, padding=1),
+            nn.ReLU(),
+            nn.AdaptiveAvgPool2d((1, 1)),
+        )
 
-        self._features_dim = 512 + 3  # ResNet features + tabular (close, balance, position)
+        self.fc = nn.Linear(256 + 3, features_dim)
 
     def forward(self, obs):
-        img = obs["image"]
-        tab = obs["features"]
+        imgs = obs["images"]  # [B,7,3,H,W] or [7,3,H,W]
 
-        with torch.no_grad():
-            yolo_feats = self.encoder(img)   # [B, C, H, W]
+        if imgs.dim() == 4:  # [7,3,H,W] → add batch
+            imgs = imgs.unsqueeze(0)
 
-        img_feats = self.resnet_backbone(yolo_feats)
-        img_feats = img_feats.view(img_feats.size(0), -1)
+        B, T, C, H, W = imgs.shape
+        feats_list = []
+        for t in range(T):
+            feats_t = self.encoder(imgs[:, t])   # [B,560,H’,W’]
+            feats_list.append(feats_t)
 
-        return torch.cat([img_feats, tab], dim=1)
+        # Concatenate all 7 frames across channel axis
+        feats = torch.cat(feats_list, dim=1)  # [B,3920,H’,W’]
+
+        cnn_out = self.cnn_head(feats).squeeze(-1).squeeze(-1)  # [B,256]
+        out = torch.cat([cnn_out, obs["features"]], dim=1)      # [B,259]
+        return self.fc(out)

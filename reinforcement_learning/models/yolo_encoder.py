@@ -1,77 +1,48 @@
-# models/yolo_encoder.py
-
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 from ultralytics import YOLO
 from torchvision import transforms
 from PIL import Image
 
-class YOLOEncoder(nn.Module):
-    def __init__(
-        self, 
-        weight_path="./best.pt"
-    ):
+
+class YOLOEncoder(torch.nn.Module):
+    def __init__(self, model_path="./models/yolov8n.pt", image_size=(640, 640)):
         super().__init__()
-        
-        self.yolo = YOLO(weight_path).model
+        self.yolo = YOLO(model_path).model
+        self.image_size = image_size
+
         self.features = {}
-        
-        ############################################################
-        # Register hooks for intermediate YOLO layers.
-        #
-        # - These lines “plant hooks” on layers 15, 18, and 21 in the YOLO model.
-        # - A forward hook is a function that runs automatically whenever that
-        #   layer executes during a forward pass.
-        # - Our hook function (_hook) just saves the output of the layer into
-        #   self.features under the given key ("P3", "P4", "P5").
-        #
-        # Flow:
-        #   1. Call self.yolo(x) → YOLO forward starts.
-        #   2. When layer 15 finishes, hook saves its output in self.features["P3"].
-        #   3. When layer 18 finishes, hook saves its output in self.features["P4"].
-        #   4. When layer 21 finishes, hook saves its output in self.features["P5"].
-        #   5. After the forward pass, we can retrieve them directly:
-        #        p3, p4, p5 = self.features["P3"], self.features["P4"], self.features["P5"]
-        #
-        # In short: the hook makes intermediate feature maps available
-        # without changing YOLO itself.
-        ############################################################
-        self.yolo.model[15].register_forward_hook(self._hook("P3"))
-        self.yolo.model[18].register_forward_hook(self._hook("P4"))
-        self.yolo.model[21].register_forward_hook(self._hook("P5"))
-        ############################################################
-        
-        
+        self.yolo.model[10].register_forward_hook(lambda _, __, out: self._hook("P3", out))
+        self.yolo.model[13].register_forward_hook(lambda _, __, out: self._hook("P4", out))
+        self.yolo.model[16].register_forward_hook(lambda _, __, out: self._hook("P5", out))
+
         self.transform = transforms.Compose([
-            transforms.Resize((640, 640)),
-            transforms.ToTensor()
+            transforms.Resize(image_size),
+            transforms.ToTensor(),
         ])
 
-    def _hook(self, name):
-        def fn(module, input, output):
-            self.features[name] = output
-        return fn
+    def _hook(self, name, output):
+        self.features[name] = output
 
-    def forward(self, img_path_or_tensor):
-        # Handle str path or pre-loaded tensor
+    def preprocess(self, img_path_or_tensor):
         if isinstance(img_path_or_tensor, str):
             img = Image.open(img_path_or_tensor).convert("RGB")
-            x = self.transform(img).unsqueeze(0)
+            return self.transform(img).unsqueeze(0)  # [1,3,H,W]
+        elif isinstance(img_path_or_tensor, torch.Tensor):
+            if img_path_or_tensor.ndim == 3:
+                return img_path_or_tensor.unsqueeze(0)
+            return img_path_or_tensor
         else:
-            x = img_path_or_tensor  # assume already [B,3,H,W]
+            raise ValueError("Input must be path or tensor")
 
+    def forward(self, batch_imgs):
         with torch.no_grad():
-            _ = self.yolo(x)
+            _ = self.yolo(batch_imgs)
 
         p3, p4, p5 = self.features["P3"], self.features["P4"], self.features["P5"]
 
-        # Upsample p4, p5 → match p3 resolution
         target_size = p3.shape[-2:]
         p4_up = F.interpolate(p4, size=target_size, mode="bilinear", align_corners=False)
         p5_up = F.interpolate(p5, size=target_size, mode="bilinear", align_corners=False)
 
-        # Stack along channel axis
-        stacked = torch.cat([p3, p4_up, p5_up], dim=1)  # [B, C3+C4+C5, H, W]
-        return stacked
-
+        return torch.cat([p3, p4_up, p5_up], dim=1)  # [B,560,H,W]
