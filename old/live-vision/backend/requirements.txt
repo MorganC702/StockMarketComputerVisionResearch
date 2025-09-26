@@ -1,6 +1,0 @@
-fastapi
-uvicorn[standard]
-pandas
-mplfinance
-ultralytics
-python-multipart
