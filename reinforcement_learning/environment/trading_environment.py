@@ -1,17 +1,17 @@
-# envs/trading_env.py
-
+from pathlib import Path
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
 import pandas as pd
 from PIL import Image
 from torchvision import transforms
-
+import csv
 
 class TradingEnv(gym.Env):
-    def __init__(self, meta_df: pd.DataFrame, image_size=(640, 640)):
+    def __init__(self, meta_df: pd.DataFrame, image_size=(640, 640), base_dir="./data/dataset"):
         super().__init__()
         self.meta_df = meta_df.sort_values("timestamp").reset_index(drop=True)
+        self.base_dir = Path(base_dir)
 
         # --- Actions ---
         self.action_space = spaces.Discrete(3)  # 0=hold, 1=buy, 2=sell
@@ -19,43 +19,51 @@ class TradingEnv(gym.Env):
         # --- Observation space ---
         c, h, w = 3, image_size[0], image_size[1]
         self.observation_space = spaces.Dict({
-            "image": spaces.Box(low=0, high=1, shape=(c, h, w), dtype=np.float32),
-            "features": spaces.Box(low=-np.inf, high=np.inf, shape=(3,), dtype=np.float32)
+            "images": spaces.Box(low=0, high=1, shape=(7, c, h, w), dtype=np.float32),
+            "features": spaces.Box(low=-np.inf, high=np.inf, shape=(3,), dtype=np.float32),
         })
 
-        # --- Trading state ---
+        # --- State ---
         self.balance = 10000.0
-        self.position = 0  # -1 short, 0 flat, +1 long
+        self.position = 0
         self.current_step = 0
 
-        # --- Image preprocessing ---
+        # --- Preprocessing ---
         self.img_transform = transforms.Compose([
             transforms.Resize(image_size),
             transforms.ToTensor()
         ])
 
-    def _get_obs(self):
-        # If we've run out of data, return dummy obs
-        if self.current_step >= len(self.meta_df):
-            return {
-                "image": np.zeros((3, 640, 640), dtype=np.float32),
-                "features": np.zeros(3, dtype=np.float32)
-            }
+        self.timeframes = ["1m", "3m", "5m", "15m", "1h", "4h", "1d"]
 
+    def _resolve_path(self, path_str: str) -> Path:
+        """Resolve CSV paths like './dataset/1m/images/frame_00001.png'
+        to the real file under self.base_dir."""
+        p = Path(path_str)
+        if not p.is_absolute():
+            try:
+                p = self.base_dir / p.relative_to("./dataset")
+            except ValueError:
+                p = self.base_dir / p
+        return p
+
+    def _get_obs(self):
         row = self.meta_df.iloc[self.current_step]
 
-        # Load + preprocess image
-        img = Image.open(row["path"]).convert("RGB")
-        img_tensor = self.img_transform(img).numpy()
+        imgs = []
+        for tf in self.timeframes:
+            img_path = self._resolve_path(row[tf])
+            img = Image.open(img_path).convert("RGB")
+            imgs.append(self.img_transform(img).numpy())  # [3,H,W]
 
-        # Tabular features
-        obs_features = np.array([
-            row["close"],
-            self.balance,
-            self.position
-        ], dtype=np.float32)
+        imgs = np.stack(imgs, axis=0)  # [7,3,H,W]
 
-        return {"image": img_tensor, "features": obs_features}
+        obs_features = np.array(
+            [row["close"], self.balance, self.position],
+            dtype=np.float32
+        )
+
+        return {"images": imgs, "features": obs_features}
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -63,63 +71,54 @@ class TradingEnv(gym.Env):
         self.position = 0
         self.current_step = 0
         return self._get_obs(), {}
-
+    
 
     def step(self, action):
         row = self.meta_df.iloc[self.current_step]
-
         prev_close = self.meta_df.loc[self.current_step - 1, "close"] if self.current_step > 0 else row["close"]
         curr_close = row["close"]
 
-        # --- Base reward from position ---
-        reward = 0.0
+        # --- Determine reward (win/loss) ---
+        raw_pnl = 0.0
         if self.position == 1:   # long
-            reward = curr_close - prev_close
+            raw_pnl = curr_close - prev_close
         elif self.position == -1:  # short
-            reward = prev_close - curr_close
+            raw_pnl = prev_close - curr_close
 
-        # --- Transaction cost ---
-        fee_rate = 0.001  # 0.1% per trade
-        transaction_cost = 0.0
+        # win/loss reward
+        if raw_pnl > 0:
+            reward = 1.0
+        elif raw_pnl < 0:
+            reward = -1.0
+        else:
+            reward = 0.0   # optional
 
+        # --- Transaction handling (no balance scaling now) ---
         new_position = self.position
-        if action == 1:    # buy
-            if self.position != 1:  # only pay if changing position
-                transaction_cost = curr_close * fee_rate
+        if action == 1:  # buy
             new_position = 1
         elif action == 2:  # sell
-            if self.position != -1:
-                transaction_cost = curr_close * fee_rate
             new_position = -1
         elif action == 0:  # hold
             new_position = self.position
 
-        # --- Over-trading penalty ---
-        overtrade_penalty = -0.05 if new_position != self.position else 0.0
-
-        # --- Holding penalty ---
-        holding_penalty = -0.01 if new_position != 0 else 0.0
-
-        # --- Final reward ---
-        reward = reward - transaction_cost + overtrade_penalty + holding_penalty
-
-        # Update state
+        # --- State update ---
         self.position = new_position
-        self.balance += reward
         self.current_step += 1
-        done = self.current_step >= len(self.meta_df)
+
+        terminated = self.current_step >= len(self.meta_df)
+        truncated = False
 
         obs = self._get_obs()
         info = {
             "timestamp": row["timestamp"],
-            "balance": self.balance,
+            "step": self.current_step,
+            "reward": reward,
             "position": self.position,
-            "reward_breakdown": {
-                "pnl": float(curr_close - prev_close if self.position != 0 else 0.0),
-                "transaction_cost": float(-transaction_cost),
-                "overtrade_penalty": float(overtrade_penalty),
-                "holding_penalty": float(holding_penalty)
-            }
         }
 
-        return obs, reward, done, False, info
+        # --- log to CSV ---
+        # with open("trade_log.csv", "a") as f:
+        #     f.write(f"{row['timestamp']},{self.current_step},{reward},{self.position}\n")
+
+        return obs, reward, terminated, truncated, info
