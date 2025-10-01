@@ -13,7 +13,7 @@ cache: false
 device: '0'
 workers: 2
 project: runs
-name: yolo_run_7
+name: yolo_run_
 exist_ok: false
 pretrained: true
 optimizer: auto
@@ -103,4 +103,4 @@ auto_augment: randaugment
 erasing: 0.0
 cfg: null
 tracker: botsort.yaml
-save_dir: /home/morgan-cooper/MSDS Research/StockMarketComputerVisionResearch/reinforcement_learning/models/runs/yolo_run_7
+save_dir: /home/morgan-cooper/MSDS Research/StockMarketComputerVisionResearch/reinforcement_learning/models/runs/yolo_run_
