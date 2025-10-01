@@ -52,16 +52,30 @@ def generate_zone_image(
     yolo_labels = []
 
     def make_yolo_box(x0, y0, x1, y1, class_id):
+        # clamp pixel coords
+        x0 = max(0, min(x0, width - 1))
+        x1 = max(0, min(x1, width - 1))
+        y0 = max(0, min(y0, height - 1))
+        y1 = max(0, min(y1, height - 1))
+
+        # normalized values
         x_center = (x0 + x1) / 2 / width
         y_center = (y0 + y1) / 2 / height
         w_norm = (x1 - x0) / width
         h_norm = (y1 - y0) / height
+
+        # clamp normalized values into [0,1]
+        x_center = min(max(x_center, 0.0), 1.0)
+        y_center = min(max(y_center, 0.0), 1.0)
+        w_norm   = min(max(w_norm, 0.0), 1.0)
+        h_norm   = min(max(h_norm, 0.0), 1.0)
+
         return f"{class_id} {x_center:.6f} {y_center:.6f} {w_norm:.6f} {h_norm:.6f}"
 
     # --- Zones (support/resistance) ---
     for zone in visible_zones:
         base_color = (0, 255, 0) if zone["zone_type"] == -1 else (0, 0, 255)
-        class_id = 1 if zone["zone_type"] == -1 else 2  # 1=Demand (support), 2=Supply (resistance)
+        class_id = 1 if zone["zone_type"] == -1 else 2  # 1=Demand, 2=Supply
 
         y0 = price_to_y(zone["high"])
         y1 = price_to_y(zone["low"])
@@ -109,7 +123,6 @@ def generate_zone_image(
         y0_price = max(0, y - box_thickness)
         y1_price = min(height - 1, y + box_thickness)
         yolo_labels.append(make_yolo_box(pad_x, y0_price, width - pad_x, y1_price, 0))
-
 
     # --- Save image ---
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
