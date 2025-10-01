@@ -10,40 +10,39 @@ class YOLOCNNExtractor(BaseFeaturesExtractor):
 
         self.encoder = YOLOEncoder(model_path)
 
-        # Probe YOLO output
-        dummy = torch.zeros(1, 3, 640, 640)
+        # Test encoder with dummy image of new size
+        dummy = torch.zeros(1, 3, 224, 224)  # ✅ UPDATED to 224x224
         with torch.no_grad():
             out = self.encoder(dummy)
-        self.yolo_channels = out.shape[1]       # = 560
+        self.yolo_channels = out.shape[1]  # Should be 3
 
-        # multiply by number of frames (7)
-        self.total_channels = self.yolo_channels * 7   # = 3920
+        # 7 images × yolo_channels (usually 3) = 21 input channels to CNN
+        self.total_channels = self.yolo_channels * 7  # = 21 if 3 channels/image
 
         self.cnn_head = nn.Sequential(
-            nn.Conv2d(self.total_channels, 512, kernel_size=3, stride=2, padding=1),
+            nn.Conv2d(self.total_channels, 64, kernel_size=3, stride=2, padding=1),
             nn.ReLU(),
-            nn.Conv2d(512, 256, kernel_size=3, stride=2, padding=1),
-            nn.ReLU(),
-            nn.AdaptiveAvgPool2d((1, 1)),
+            nn.AdaptiveAvgPool2d((1, 1)),  # Output: [B, 64, 1, 1]
         )
 
-        self.fc = nn.Linear(256 + 3, features_dim)
+        # ✅ FIXED: 6 features not 5
+        self.fc = nn.Linear(64 + 6, features_dim)
 
     def forward(self, obs):
-        imgs = obs["images"]  # [B,7,3,H,W] or [7,3,H,W]
+        imgs = obs["images"]  # [B, 7, 3, 224, 224] or [7, 3, 224, 224]
 
-        if imgs.dim() == 4:  # [7,3,H,W] → add batch
+        if imgs.dim() == 4:  # No batch dim → add one
             imgs = imgs.unsqueeze(0)
 
         B, T, C, H, W = imgs.shape
         feats_list = []
         for t in range(T):
-            feats_t = self.encoder(imgs[:, t])   # [B,560,H’,W’]
+            feats_t = self.encoder(imgs[:, t])  # [B, 3, H', W']
             feats_list.append(feats_t)
 
-        # Concatenate all 7 frames across channel axis
-        feats = torch.cat(feats_list, dim=1)  # [B,3920,H’,W’]
+        # Concatenate on channel axis → [B, 21, H, W]
+        feats = torch.cat(feats_list, dim=1)
 
-        cnn_out = self.cnn_head(feats).squeeze(-1).squeeze(-1)  # [B,256]
-        out = torch.cat([cnn_out, obs["features"]], dim=1)      # [B,259]
+        cnn_out = self.cnn_head(feats).squeeze(-1).squeeze(-1)  # [B, 64]
+        out = torch.cat([cnn_out, obs["features"]], dim=1)      # [B, 64 + 6]
         return self.fc(out)

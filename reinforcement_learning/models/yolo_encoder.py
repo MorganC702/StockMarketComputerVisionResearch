@@ -35,14 +35,33 @@ class YOLOEncoder(torch.nn.Module):
         else:
             raise ValueError("Input must be path or tensor")
 
-    def forward(self, batch_imgs):
+    def forward(self, img):
+        """
+        img: Tensor of shape [B, 3, H, W] — one RGB image per timeframe
+        Returns: [B, 3, H, W] — averaged and aligned feature maps from P3, P4, P5
+        """
+        if img.ndim == 3:
+            img = img.unsqueeze(0)  # [1, 3, H, W]
+
         with torch.no_grad():
-            _ = self.yolo(batch_imgs)
+            _ = self.yolo(img)
 
-        p3, p4, p5 = self.features["P3"], self.features["P4"], self.features["P5"]
+        p3 = self.features["P3"]  # [B, C, H1, W1]
+        p4 = self.features["P4"]
+        p5 = self.features["P5"]
 
-        target_size = p3.shape[-2:]
-        p4_up = F.interpolate(p4, size=target_size, mode="bilinear", align_corners=False)
-        p5_up = F.interpolate(p5, size=target_size, mode="bilinear", align_corners=False)
+        # Average over channels → [B, 1, H, W]
+        p3_avg = p3.mean(dim=1, keepdim=True)
+        p4_avg = p4.mean(dim=1, keepdim=True)
+        p5_avg = p5.mean(dim=1, keepdim=True)
 
-        return torch.cat([p3, p4_up, p5_up], dim=1)  # [B,560,H,W]
+        # Upsample to P3's size
+        target_size = p3_avg.shape[-2:]
+        p4_up = F.interpolate(p4_avg, size=target_size, mode="bilinear", align_corners=False)
+        p5_up = F.interpolate(p5_avg, size=target_size, mode="bilinear", align_corners=False)
+
+        # Stack to get [B, 3, H, W]
+        features = torch.cat([p3_avg, p4_up, p5_up], dim=1)
+
+        return features
+
