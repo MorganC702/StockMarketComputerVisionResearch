@@ -43,6 +43,5 @@ class ZoneEngine:
         tracker.update(bar)
 
 
-
     def get_visible_zones(self, tf: str, linger_bars: int = 60):
         return self.trackers[tf].get_visible_zones(linger_bars=linger_bars)

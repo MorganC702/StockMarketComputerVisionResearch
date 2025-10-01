@@ -15,7 +15,7 @@ def generate_zone_image(
     save_path: str,
     image_size=(640, 640),
     right_padding_bars: int = 30,
-    save_yolo_labels: bool = False,  # ✅ Toggle for YOLO
+    save_yolo_labels: bool = True,
 ):
     width, height = image_size
     pad_x = int(width * 0.01)
@@ -58,10 +58,10 @@ def generate_zone_image(
         h_norm = (y1 - y0) / height
         return f"{class_id} {x_center:.6f} {y_center:.6f} {w_norm:.6f} {h_norm:.6f}"
 
-    # --- Zones ---
+    # --- Zones (support/resistance) ---
     for zone in visible_zones:
         base_color = (0, 255, 0) if zone["zone_type"] == -1 else (0, 0, 255)
-        class_id = 1 if zone["zone_type"] == -1 else 2  # 1=Demand, 2=Supply
+        class_id = 1 if zone["zone_type"] == -1 else 2  # 1=Demand (support), 2=Supply (resistance)
 
         y0 = price_to_y(zone["high"])
         y1 = price_to_y(zone["low"])
@@ -103,7 +103,14 @@ def generate_zone_image(
     for x in range(pad_x, width - pad_x, dash_len * 2):
         cv2.line(img, (x, y), (x + dash_len, y), (255, 0, 0), 1)
 
-    
+    # Save YOLO label for price line (class 0)
+    if save_yolo_labels:
+        box_thickness = 15  # half-height in pixels → total ~30px tall
+        y0_price = max(0, y - box_thickness)
+        y1_price = min(height - 1, y + box_thickness)
+        yolo_labels.append(make_yolo_box(pad_x, y0_price, width - pad_x, y1_price, 0))
+
+
     # --- Save image ---
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     cv2.imwrite(save_path, img)
@@ -114,8 +121,6 @@ def generate_zone_image(
         os.makedirs(os.path.dirname(label_path), exist_ok=True)
         with open(label_path, "w") as f:
             f.write("\n".join(yolo_labels))
-
-
 
 
 class ImageGenerator:
