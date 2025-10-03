@@ -1,0 +1,5 @@
+path: ../img_dataset
+train: images/train
+val: images/val
+nc: 3
+names: [price_line, demand_zone, supply_zone]

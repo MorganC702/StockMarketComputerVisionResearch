@@ -6,7 +6,7 @@ import pandas as pd
 
 from pipeline.aggregator import TimeframeAggregator
 from pipeline.feature_extractor import FeatureExtractor
-from pipeline.generate_image import ImageGenerator
+from StockMarketComputerVisionResearch.reinforcement_learning.data_gen.generate_image import ImageGenerator
 from pipeline.image_stack_builder import ImageStackBuilder
 from pipeline.zone_engine import ZoneEngine 
 
