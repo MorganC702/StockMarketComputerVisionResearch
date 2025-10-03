@@ -2,7 +2,7 @@ task: detect
 mode: train
 model: yolov8n.pt
 data: ../img_dataset/data.yaml
-epochs: 100
+epochs: 1
 time: null
 patience: 10
 batch: 16
@@ -10,7 +10,7 @@ imgsz: 640
 save: true
 save_period: -1
 cache: false
-device: cpu
+device: null
 workers: 2
 project: runs
 name: yolo_run_3
@@ -103,4 +103,4 @@ auto_augment: randaugment
 erasing: 0.0
 cfg: null
 tracker: botsort.yaml
-save_dir: /Users/morgancooper/data-science/MSDSResearchProjects/StockMarketComputerVisionResearch/reinforcement_learning/models/runs/yolo_run_3
+save_dir: /home/morgan-cooper/MSDS Research/StockMarketComputerVisionResearch/reinforcement_learning/models/runs/yolo_run_3

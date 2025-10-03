@@ -6,7 +6,7 @@ from PIL import Image
 
 
 class YOLOEncoder(torch.nn.Module):
-    def __init__(self, model_path="./models/yolov8n.pt", image_size=(640, 640)):
+    def __init__(self, model_path="./models/runs/yolo_run_2/weights/best.pt", image_size=(640, 640)):
         super().__init__()
         self.yolo = YOLO(model_path).model
         self.image_size = image_size

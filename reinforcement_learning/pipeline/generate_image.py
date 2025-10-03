@@ -3,11 +3,13 @@ import pandas as pd
 import cv2
 import os
 
+
 def draw_faded_rectangle(img, pt1, pt2, color, alpha):
     """Draws a transparent rectangle onto img with alpha blending."""
     overlay = img.copy()
     cv2.rectangle(overlay, pt1, pt2, color, -1)
     return cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0)
+
 
 def generate_zone_image(
     window: pd.DataFrame,
@@ -24,23 +26,18 @@ def generate_zone_image(
     usable_width = width - 2 * pad_x
     usable_height = height - 2 * pad_y
 
-    # --- Background (pure white) ---
+    # --- Background (white) ---
     img = np.ones((height, width, 3), dtype=np.uint8) * 255
 
-    # --- Center Y-axis around last close price ---
-    center_price = window.iloc[-1]["close"]
+    # --- Scale Y strictly by hi/lo of window ---
     hi = window["high"].max()
     lo = window["low"].min()
-    max_offset = max(abs(hi - center_price), abs(lo - center_price))
-
-    hi = center_price + max_offset
-    lo = center_price - max_offset
     price_range = hi - lo if hi != lo else 1e-6
 
     def price_to_y(p):
         return pad_y + int((hi - p) / price_range * (usable_height - 1))
 
-    # --- Scaling for time (X axis) ---
+    # --- Scale X by index ---
     n = len(window)
     usable_bars = n - 1 + right_padding_bars
     step_x = usable_width / max(usable_bars, 1)
@@ -48,34 +45,34 @@ def generate_zone_image(
     def index_to_x(i):
         return pad_x + int(i * step_x)
 
-    # --- Prepare YOLO label output ---
+    # --- Prepare YOLO labels ---
     yolo_labels = []
 
     def make_yolo_box(x0, y0, x1, y1, class_id):
-        # clamp pixel coords
+        # Clamp pixels
         x0 = max(0, min(x0, width - 1))
         x1 = max(0, min(x1, width - 1))
         y0 = max(0, min(y0, height - 1))
         y1 = max(0, min(y1, height - 1))
 
-        # normalized values
+        # Normalize
         x_center = (x0 + x1) / 2 / width
         y_center = (y0 + y1) / 2 / height
         w_norm = (x1 - x0) / width
         h_norm = (y1 - y0) / height
 
-        # clamp normalized values into [0,1]
+        # Clamp normalized
         x_center = min(max(x_center, 0.0), 1.0)
         y_center = min(max(y_center, 0.0), 1.0)
-        w_norm   = min(max(w_norm, 0.0), 1.0)
-        h_norm   = min(max(h_norm, 0.0), 1.0)
+        w_norm = min(max(w_norm, 0.0), 1.0)
+        h_norm = min(max(h_norm, 0.0), 1.0)
 
         return f"{class_id} {x_center:.6f} {y_center:.6f} {w_norm:.6f} {h_norm:.6f}"
 
-    # --- Zones (support/resistance) ---
+    # --- Zones ---
     for zone in visible_zones:
         base_color = (0, 255, 0) if zone["zone_type"] == -1 else (0, 0, 255)
-        class_id = 1 if zone["zone_type"] == -1 else 2  # 1=Demand, 2=Supply
+        class_id = 1 if zone["zone_type"] == -1 else 2
 
         y0 = price_to_y(zone["high"])
         y1 = price_to_y(zone["low"])
@@ -93,10 +90,8 @@ def generate_zone_image(
             x1 = index_to_x(n - 1 + right_padding_bars)
             alpha = 0.4
 
-        # Draw rectangle
         img = draw_faded_rectangle(img, (x0, y0), (x1, y1), base_color, alpha)
 
-        # Save YOLO box if active
         if save_yolo_labels and not zone.get("zone_broken", False):
             yolo_labels.append(make_yolo_box(x0, y0, x1, y1, class_id))
 
@@ -117,9 +112,9 @@ def generate_zone_image(
     for x in range(pad_x, width - pad_x, dash_len * 2):
         cv2.line(img, (x, y), (x + dash_len, y), (255, 0, 0), 1)
 
-    # Save YOLO label for price line (class 0)
+    # YOLO label for price line (class 0)
     if save_yolo_labels:
-        box_thickness = 15  # half-height in pixels → total ~30px tall
+        box_thickness = 15
         y0_price = max(0, y - box_thickness)
         y1_price = min(height - 1, y + box_thickness)
         yolo_labels.append(make_yolo_box(pad_x, y0_price, width - pad_x, y1_price, 0))
@@ -144,4 +139,10 @@ class ImageGenerator:
     def generate_image(self, tf: str, df: pd.DataFrame, zones: list, save_path: str):
         candle_limit = self.candle_limits.get(tf, 60)
         window = df.tail(candle_limit)
-        generate_zone_image(window, zones, save_path, image_size=self.image_size, save_yolo_labels=True)
+        generate_zone_image(
+            window,
+            zones,
+            save_path,
+            image_size=self.image_size,
+            save_yolo_labels=True,
+        )

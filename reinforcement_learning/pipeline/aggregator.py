@@ -25,8 +25,6 @@ class TimeframeAggregator:
 
     def _get_pandas_rule(self, tf: str) -> str:
         return {
-            "1m" :  "1min",
-            "3m" :  "3min",
             "5m" :  "5min",
             "15m":  "15min",
             "1h" :  "1h",

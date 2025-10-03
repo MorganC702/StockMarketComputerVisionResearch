@@ -11,7 +11,7 @@ class YOLOCNNExtractor(BaseFeaturesExtractor):
         self, 
         observation_space, 
         features_dim=512, 
-        model_path="./models/yolov8n.pt"
+        model_path="./models/runs/yolo_run_2/weights/best.pt"
     ):
         super().__init__(observation_space, features_dim)
 
