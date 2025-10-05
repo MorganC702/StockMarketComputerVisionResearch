@@ -37,17 +37,6 @@ class CNNLSTMExtractor(BaseFeaturesExtractor):
         resnet.fc = nn.Identity()
         self.resnet = resnet
 
-        # Each step has N_tf images → after resnet we get N_tf * 512 features
-        step_feature_dim = self._n_timeframes * 512
-
-        # --- LSTM for temporal sequence modeling ---
-        self.lstm = nn.LSTM(
-            input_size=step_feature_dim,
-            hidden_size=features_dim,
-            batch_first=True,
-            num_layers=2,  # deeper LSTM for robustness
-            dropout=0.1
-        )
 
         self._features_dim = features_dim
 
