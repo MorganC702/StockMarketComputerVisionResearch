@@ -33,7 +33,7 @@ class TradingEnv(gym.Env):
         self.risk_per_trade = risk_per_trade
         self.starting_balance = float(starting_balance)
         self.leverage = leverage
-        self.window_size = int((60 / 5) * 24)  # 1 day
+        self.window_size = int((60 / 5) * 24 * 6)  # 1 day
 
         self.transform = transforms.Compose([
             transforms.Resize(self.image_size),
@@ -121,9 +121,9 @@ class TradingEnv(gym.Env):
         row = self.meta_df.iloc[self.current_index]
         price = row["close"]
 
-        reward = 0.0
         self.last_trade_pnl = 0.0
         self.last_trade_fee = 0.0
+        reward = 0.0
 
         # === Action Logic ===
         if action != self.last_action:
@@ -136,9 +136,16 @@ class TradingEnv(gym.Env):
             self.balance += net_pnl
             self.realized_pnl += net_pnl
             self.last_trade_pnl = net_pnl
-            self.last_trade_fee = self.open_fee + fee_close  # ✅ correct total fee
+            self.last_trade_fee = self.open_fee + fee_close
 
-            reward = net_pnl
+            # ✅ Use % return relative to starting_balance
+            pct_return = net_pnl / self.starting_balance
+
+            # === Reward on exit ===
+            if pct_return > 0:
+                reward = 5
+            else:
+                reward = -1
 
             # Open new position in opposite direction
             risk_amount = self.balance * self.risk_per_trade
@@ -150,15 +157,23 @@ class TradingEnv(gym.Env):
             self.open_fee = fee_open
             self.unrealized_pnl = -fee_open
 
-        # === Holding Logic ===
-        if self.position == 1:
-            gross = (price - self.entry_price) * self.position_size
         else:
-            gross = (self.entry_price - price) * self.position_size
-        self.unrealized_pnl = gross - self.open_fee
+            # === Holding logic ===
+            if self.position == 1:
+                gross = (price - self.entry_price) * self.position_size
+            else:
+                gross = (self.entry_price - price) * self.position_size
 
-        if reward == 0:
-            reward = self.unrealized_pnl if self.unrealized_pnl < 0 else 0.0
+            self.unrealized_pnl = gross - self.open_fee
+
+            # ✅ Use unrealized % return
+            unrealized_return = self.unrealized_pnl / self.starting_balance
+
+            # === Reward for holding ===
+            if unrealized_return >= 0:
+                reward = 0                                 
+            else:
+                reward = 0 # penalize holding loss slightly
 
         # === Buffers ===
         self.pnl_buffer.append(self.unrealized_pnl)
@@ -187,6 +202,7 @@ class TradingEnv(gym.Env):
         }
 
         return obs, reward, terminated, truncated, info
+
 
     def _get_observation(self):
         row = self.meta_df.iloc[self.current_index]
