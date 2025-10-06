@@ -4,7 +4,7 @@ from tqdm import tqdm
 import os
 import pandas as pd
 
-from pipeline.aggregator import TimeframeAggregator
+from StockMarketComputerVisionResearch.agenda3.aggregator import TimeframeAggregator
 from pipeline.feature_extractor import FeatureExtractor
 from StockMarketComputerVisionResearch.reinforcement_learning.data_gen.generate_image import ImageGenerator
 from pipeline.image_stack_builder import ImageStackBuilder
