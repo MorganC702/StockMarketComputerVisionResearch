@@ -8,8 +8,8 @@ import torch
 import logging
 import csv
 from collections import deque
-from reward_functions.reward_v1 import compute_reward_1to1
 
+from reward_functions.reward_v8 import compute_reward_1to1
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
