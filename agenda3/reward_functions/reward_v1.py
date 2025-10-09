@@ -1,6 +1,6 @@
 # reward_function.py
 
-def compute_reward_1to1(
+def compute_reward(
     action, 
     last_action, 
     net_pnl, 

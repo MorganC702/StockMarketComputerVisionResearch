@@ -9,7 +9,8 @@ import logging
 import csv
 from collections import deque
 
-from reward_functions.reward_v8 import compute_reward_1to1
+from reward_functions.reward_v9 import compute_reward  # Make sure this includes peak_unrealized_pnl
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,7 @@ class TradingEnv(gym.Env):
         leverage=1,
         fee_rate=0.0001,
         root_dir=None,
-        log_path="trading_log_train.csv",  # default to training log
+        log_path="trading_log_train.csv",
         log_suffix=None,
     ):
         super().__init__()
@@ -34,19 +35,17 @@ class TradingEnv(gym.Env):
         self.risk_per_trade = risk_per_trade
         self.starting_balance = float(starting_balance)
         self.leverage = leverage
-        self.window_size = int((60 / 5) * 24 * 6)  # ~1 day of 5-min intervals
-
+        
         self.transform = transforms.Compose([
             transforms.Resize(self.image_size),
             transforms.ToTensor(),
         ])
 
-        # Buffers for last 10 steps
         self.pnl_buffer = deque(maxlen=10)
         self.action_buffer = deque(maxlen=10)
         self.close_buffer = deque(maxlen=10)
+        self.unrealized_pnl_high = 0.0
 
-        # --- Spaces ---
         self.observation_space = Dict({
             "image": Box(low=0, high=1, shape=(3, *self.image_size), dtype=np.float32),
             "unrealized_pnls": Box(low=-np.inf, high=np.inf, shape=(10,), dtype=np.float32),
@@ -58,7 +57,7 @@ class TradingEnv(gym.Env):
 
         self.global_step = 0
 
-        # --- Log setup ---
+        # --- Logging ---
         self.base_log_path = Path(log_path)
         if log_suffix:
             self.log_path = self.base_log_path.with_stem(f"{self.base_log_path.stem}_{log_suffix}")
@@ -66,15 +65,13 @@ class TradingEnv(gym.Env):
             self.log_path = self.base_log_path
         self._init_csv()
 
-        self.episode_start = 0
-        self.start_index = 0
         self.reset_state()
         logger.info(f"[ENV INIT] Loaded {len(self.meta_df)} rows.")
 
     def _init_csv(self):
         self.fieldnames = [
             "step", "timestamp", "reward", "balance", "realized_pnl",
-            "unrealized_pnl", "position", "action", "trade_pnl", "trade_fee"
+            "unrealized_pnl", "position", "action", "trade_pnl"
         ]
         if not self.log_path.exists():
             with open(self.log_path, "w", newline="") as f:
@@ -86,7 +83,7 @@ class TradingEnv(gym.Env):
         self._init_csv()
 
     def reset_state(self):
-        self.current_index = self.start_index
+        self.current_index = 0
         self.balance = self.starting_balance
         self.position = 1  # start long
         self.entry_price = self.meta_df.iloc[self.current_index]["close"]
@@ -97,29 +94,26 @@ class TradingEnv(gym.Env):
         self.last_trade_fee = 0.0
         self.last_action = 1
         self.episode_reward = 0.0
+        self.unrealized_pnl_high = 0.0
 
-        # Buffers
         self.pnl_buffer = deque([0.0] * 10, maxlen=10)
         self.action_buffer = deque([1] * 10, maxlen=10)
         self.close_buffer = deque([self.entry_price] * 10, maxlen=10)
 
-        # Open long position
+        # Open initial long position
         risk_amount = self.balance * self.risk_per_trade
         self.position_size = (risk_amount * self.leverage) / self.entry_price
         self.open_fee = self.fee_rate * self.entry_price * abs(self.position_size)
         self.unrealized_pnl = -self.open_fee
 
     def reset(self, seed=42, options=None):
-        self.episode_start += self.window_size
-        if self.episode_start + self.window_size >= len(self.meta_df):
-            self.episode_start = 0
-        self.start_index = self.episode_start
         self.reset_state()
         return self._get_observation(), {}
 
     def step(self, action):
         if self.current_index >= len(self.meta_df) - 1:
-            return self.reset()[0], 0.0, True, False, {}
+            obs, _ = self.reset()
+            return obs, 0.0, True, False, {}
 
         row = self.meta_df.iloc[self.current_index]
         price = row["close"]
@@ -127,7 +121,7 @@ class TradingEnv(gym.Env):
         self.last_trade_fee = 0.0
 
         # === Trading Logic ===
-        if action != self.last_action:  # closing position
+        if action != self.last_action:  # Flip or exit
             direction = 1 if self.position == 1 else -1
             gross_pnl = direction * (price - self.entry_price) * self.position_size
             fee_close = self.fee_rate * price * abs(self.position_size)
@@ -137,32 +131,38 @@ class TradingEnv(gym.Env):
             self.last_trade_pnl = net_pnl
             self.last_trade_fee = self.open_fee + fee_close
 
-            reward = compute_reward_1to1(
+            reward = compute_reward(
                 action=action,
                 last_action=self.last_action,
                 net_pnl=net_pnl,
                 unrealized_pnl=self.unrealized_pnl,
+                peak_unrealized_pnl=self.unrealized_pnl_high,
                 starting_balance=self.starting_balance,
             )
 
-            # open opposite position
+            # Open new position
             risk_amount = self.balance * self.risk_per_trade
             self.position_size = (risk_amount * self.leverage) / price
             self.open_fee = self.fee_rate * price * abs(self.position_size)
             self.entry_price = price
             self.position *= -1
             self.unrealized_pnl = -self.open_fee
+            self.unrealized_pnl_high = 0.0
 
-        else:  # holding
+        else:  # Holding
             gross = (price - self.entry_price) * self.position_size if self.position == 1 \
                 else (self.entry_price - price) * self.position_size
             self.unrealized_pnl = gross - self.open_fee
 
-            reward = compute_reward_1to1(
+            # Track highest unrealized PnL since entry
+            self.unrealized_pnl_high = max(self.unrealized_pnl_high, self.unrealized_pnl)
+
+            reward = compute_reward(
                 action=action,
                 last_action=self.last_action,
                 net_pnl=self.last_trade_pnl,
                 unrealized_pnl=self.unrealized_pnl,
+                peak_unrealized_pnl=self.unrealized_pnl_high,
                 starting_balance=self.starting_balance,
             )
 
@@ -175,7 +175,7 @@ class TradingEnv(gym.Env):
         self.episode_reward += reward
         self.current_index += 1
 
-        terminated = self.current_index >= self.start_index + self.window_size
+        terminated = self.current_index >= len(self.meta_df) - 1
         truncated = False
 
         obs = self._get_observation()
@@ -189,13 +189,12 @@ class TradingEnv(gym.Env):
             "position": self.position,
             "action": action,
             "trade_pnl": self.last_trade_pnl,
-            "trade_fee": self.last_trade_fee,
         }
+
         return obs, reward, terminated, truncated, info
 
     def _get_observation(self):
         row = self.meta_df.iloc[self.current_index]
-        # ✅ Choose a time frame column (e.g. 5m_img)
         img_path = self.root_dir / row["5m_img"]
         if img_path.exists():
             img = Image.open(img_path).convert("RGB")
@@ -209,7 +208,7 @@ class TradingEnv(gym.Env):
             "closes": np.array(self.close_buffer, dtype=np.float32),
             "position": np.array([self.position], dtype=np.int8),
         }
-
+        
     def _log_step(self, timestamp, reward):
         with open(self.log_path, "a", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=self.fieldnames)
@@ -223,6 +222,6 @@ class TradingEnv(gym.Env):
                 "position": self.position,
                 "action": self.last_action,
                 "trade_pnl": self.last_trade_pnl,
-                "trade_fee": self.last_trade_fee,
             })
         self.global_step += 1
+
