@@ -342,3 +342,4 @@ UpgradeLog*.XML
 x64/
 x86/
 yolo_training_data/
+results/
