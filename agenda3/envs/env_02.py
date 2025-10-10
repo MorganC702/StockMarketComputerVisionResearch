@@ -9,7 +9,7 @@ import logging
 import csv
 from collections import deque
 
-from reward_functions.reward_v9 import compute_reward  # Make sure this includes peak_unrealized_pnl
+from reward_functions.reward_v10 import compute_reward  # Make sure this includes peak_unrealized_pnl
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -137,7 +137,7 @@ class TradingEnv(gym.Env):
                 net_pnl=net_pnl,
                 unrealized_pnl=self.unrealized_pnl,
                 peak_unrealized_pnl=self.unrealized_pnl_high,
-                starting_balance=self.starting_balance,
+                 current_balance=self.balance,
             )
 
             # Open new position
@@ -163,7 +163,7 @@ class TradingEnv(gym.Env):
                 net_pnl=self.last_trade_pnl,
                 unrealized_pnl=self.unrealized_pnl,
                 peak_unrealized_pnl=self.unrealized_pnl_high,
-                starting_balance=self.starting_balance,
+                current_balance=self.balance,
             )
 
         # === Buffers ===

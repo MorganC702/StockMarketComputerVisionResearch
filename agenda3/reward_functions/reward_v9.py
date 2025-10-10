@@ -9,7 +9,7 @@ def compute_reward(
     hold_gain_weight=2000.0,     # reward for positive holds
     underwater_drag=2000.0,      # linear penalty when underwater
     realized_scale=4000.0,       # reward scale on exit
-    giveback_strength=1000.0     # quadratic drawdown penalty from peak
+    giveback_strength=5000.0     # quadratic drawdown penalty from peak
 ):
     # --- Exit logic (position flip) ---
     if action != last_action:

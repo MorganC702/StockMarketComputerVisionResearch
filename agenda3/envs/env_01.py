@@ -9,7 +9,7 @@ import logging
 import csv
 from collections import deque
 
-from reward_functions.reward_v8 import compute_reward
+from reward_functions.reward_v10 import compute_reward
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -158,7 +158,7 @@ class TradingEnv(gym.Env):
                 else (self.entry_price - price) * self.position_size
             self.unrealized_pnl = gross - self.open_fee
 
-            reward = compute_reward_1to1(
+            reward = compute_reward(
                 action=action,
                 last_action=self.last_action,
                 net_pnl=self.last_trade_pnl,
